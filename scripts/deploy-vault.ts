@@ -55,13 +55,13 @@ function getAmountEnv(name: string, decimals: number, fallback: string): bigint 
 
 async function loadConfig(chainId: bigint): Promise<DeployConfig> {
   const assetDecimals = Number(process.env.ASSET_DECIMALS ?? "18");
-  
+
   // Get defaults based on chain
-  const defaults = chainId === 42220n 
-    ? CELO_MAINNET_DEFAULTS 
-    : chainId === 44787n 
-    ? CELO_ALFAJORES_DEFAULTS 
-    : null;
+  const defaults = chainId === 42220n
+    ? CELO_MAINNET_DEFAULTS
+    : chainId === 44787n
+      ? CELO_ALFAJORES_DEFAULTS
+      : null;
 
   if (!defaults) {
     console.warn("⚠️  Unknown chain, using env vars only (no defaults)");
