@@ -98,15 +98,19 @@ console.log("- Max Total Deposit:", params.maxTotalDeposit.toString());
 console.log("");
 
 console.log("Deploying AaveV3Strategy...");
-const strategy = await viem.deployContract("AaveV3Strategy", {
-  account: deployer.account,
-  args: [params.asset, params.aToken, params.addressesProvider],
-});
+// Deploy strategy with zero vault address (will be set after proxy deployment)
+const strategy = await viem.deployContract(
+  "AaveV3Strategy",
+  [params.asset, params.aToken, params.addressesProvider, "0x0000000000000000000000000000000000000000"],
+  { account: deployer.account }
+);
 
 console.log("Deploying AttestifyVault implementation...");
-const vaultImplementation = await viem.deployContract("AttestifyVault", {
-  account: deployer.account,
-});
+const vaultImplementation = await viem.deployContract(
+  "AttestifyVault",
+  [],
+  { account: deployer.account }
+);
 
 const initData = encodeFunctionData({
   abi: vaultImplementation.abi,
@@ -121,10 +125,11 @@ const initData = encodeFunctionData({
 });
 
 console.log("Deploying ERC1967 proxy...");
-const proxy = await viem.deployContract("TestProxy", {
-  account: deployer.account,
-  args: [vaultImplementation.address, initData],
-});
+const proxy = await viem.deployContract(
+  "TestProxy",
+  [vaultImplementation.address, initData],
+  { account: deployer.account }
+);
 
 const vault = await viem.getContractAt("AttestifyVault", proxy.address);
 console.log("Vault proxy deployed at:", vault.address);
