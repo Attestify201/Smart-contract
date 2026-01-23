@@ -156,13 +156,31 @@ contract AaveV3Strategy is Ownable {
     
     /**
      * @notice Get current supply APY from Aave
-     * @return APY in basis points (e.g., 350 = 3.5%)
-     * @dev This requires calling Aave's data provider for real-time APY
+     * @return APY in basis points (e.g., 350 = 3.5%, 10000 = 100%)
+     * @dev Calculates APY from Aave's currentLiquidityRate using compound interest formula
+     *      Formula: APY = ((1 + rate/RAY)^(seconds_per_year) - 1) * 10000
+     *      Uses linear approximation for gas efficiency: APY ≈ (rate * seconds_per_year / RAY) * 10000
+     *      This approximation is accurate for typical APY ranges (< 100%)
+     *      RAY = 1e27 (Aave's precision unit)
+     *      Seconds per year = 31,557,600 (365.25 * 24 * 3600)
      */
     function getCurrentAPY() external view returns (uint256) {
-        // TODO: Implement by querying Aave ProtocolDataProvider
-        // For now, return estimated APY
-        return 350; // 3.5%
+        DataTypes.ReserveData memory reserveData = aavePool.getReserveData(address(asset));
+        uint128 liquidityRate = reserveData.currentLiquidityRate;
+        
+        // If rate is zero, return 0
+        if (liquidityRate == 0) {
+            return 0;
+        }
+        
+        // Calculate APY using linear approximation: APY ≈ (rate * seconds_per_year / RAY) * 10000
+        // This is accurate for typical interest rates and gas-efficient
+        // For more precision, use: APY = ((1 + rate/RAY)^(seconds_per_year) - 1) * 10000
+        // But that requires expensive exponentiation
+        // RAY = 1e27, SECONDS_PER_YEAR = 31557600, BASIS_POINTS = 10000
+        uint256 apyBasisPoints = (uint256(liquidityRate) * 31557600 * 10000) / 1e27;
+        
+        return apyBasisPoints;
     }
     
     /**
