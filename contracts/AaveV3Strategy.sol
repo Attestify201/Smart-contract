@@ -12,6 +12,11 @@ import {DataTypes} from "@aave/core-v3/contracts/protocol/libraries/types/DataTy
  * @title AaveV3Strategy
  * @notice Handles all Aave V3 integration logic
  * @dev Separates Aave-specific code from vault logic for clean architecture
+ * @dev AUDIT FIXES IMPLEMENTED:
+ *      - C-01: Fixed uninitialized vault by making it immutable and required in constructor
+ *      - M-02: Added return value checking for Aave supply operation
+ *      - I-01: Standardized all error handling with custom errors
+ *      - I-02: Added comprehensive NatSpec documentation
  */
 contract AaveV3Strategy is Ownable {
     using SafeERC20 for IERC20;
@@ -22,8 +27,10 @@ contract AaveV3Strategy is Ownable {
     IERC20 public immutable aToken; // acUSD token
     IPool public immutable aavePool;
     IPoolAddressesProvider public immutable addressesProvider;
-
-    address public vault; // Only vault can call deposit/withdraw (settable once)
+    
+    // FIX C-01: Made vault immutable to prevent uninitialized state
+    // This ensures vault is always set at deployment and cannot be changed
+    address public immutable vault;
 
     /* ========== EVENTS ========== */
 
@@ -36,7 +43,7 @@ contract AaveV3Strategy is Ownable {
     error ZeroAmount();
     error ZeroAddress();
     error InsufficientBalance();
-    error VaultAlreadySet();
+    error SupplyMismatch(uint256 expected, uint256 actual); // FIX M-02: Added for supply validation
 
     /* ========== CONSTRUCTOR ========== */
 
@@ -45,7 +52,8 @@ contract AaveV3Strategy is Ownable {
      * @param _asset Underlying asset (cUSD)
      * @param _aToken Aave interest-bearing token (acUSD)
      * @param _addressesProvider Aave PoolAddressesProvider
-     * @param _vault Vault contract address (can be set in constructor or via setVault once)
+     * @param _vault Vault contract address (REQUIRED - cannot be zero)
+     * @dev FIX C-01: Vault is now required in constructor and immutable
      */
     constructor(
         address _asset,
@@ -53,10 +61,12 @@ contract AaveV3Strategy is Ownable {
         address _addressesProvider,
         address _vault
     ) Ownable(msg.sender) {
+        // FIX C-01: Added vault to zero address check
         if (
             _asset == address(0) ||
             _aToken == address(0) ||
-            _addressesProvider == address(0)
+            _addressesProvider == address(0) ||
+            _vault == address(0)
         ) {
             revert ZeroAddress();
         }
@@ -64,11 +74,9 @@ contract AaveV3Strategy is Ownable {
         asset = IERC20(_asset);
         aToken = IERC20(_aToken);
         addressesProvider = IPoolAddressesProvider(_addressesProvider);
-
-        // Vault can be set in constructor or later via setVault (but only once)
-        if (_vault != address(0)) {
-            vault = _vault;
-        }
+        
+        // FIX C-01: Initialize immutable vault (no longer settable)
+        vault = _vault;
 
         // Get Pool address from provider (recommended by Aave)
         aavePool = IPool(addressesProvider.getPool());
@@ -79,6 +87,10 @@ contract AaveV3Strategy is Ownable {
 
     /* ========== MODIFIERS ========== */
 
+    /**
+     * @notice Restricts function access to vault only
+     * @dev FIX C-01: Now works correctly with immutable vault
+     */
     modifier onlyVault() {
         if (msg.sender != vault) revert OnlyVault();
         _;
@@ -90,6 +102,7 @@ contract AaveV3Strategy is Ownable {
      * @notice Deposit assets to Aave
      * @param amount Amount to deposit
      * @return Amount actually deposited
+     * @dev FIX M-02: Now validates that aTokens were received correctly
      */
     function deposit(uint256 amount) external onlyVault returns (uint256) {
         if (amount == 0) revert ZeroAmount();
@@ -97,20 +110,25 @@ contract AaveV3Strategy is Ownable {
         // Transfer from vault to this strategy
         asset.safeTransferFrom(msg.sender, address(this), amount);
 
-        // Supply to Aave (receives aTokens automatically)
-        // Note: Aave's supply() doesn't return a value, but we verify balance increase
+        // FIX M-02: Check aToken balance before and after supply
         uint256 balanceBefore = aToken.balanceOf(address(this));
+        
+        // Supply to Aave (receives aTokens automatically)
         aavePool.supply(
             address(asset),
             amount,
             address(this),
             0 // No referral code
         );
+        
         uint256 balanceAfter = aToken.balanceOf(address(this));
+        uint256 received = balanceAfter - balanceBefore;
 
-        // Verify that we received aTokens (should be >= amount due to interest accrual)
-        if (balanceAfter < balanceBefore + amount) {
-            revert InsufficientBalance();
+        // FIX M-02: Verify that we received expected aTokens
+        // Note: In normal conditions, received should equal amount (1:1 ratio)
+        // We allow received >= amount to handle edge cases with interest accrual
+        if (received < amount) {
+            revert SupplyMismatch(amount, received);
         }
 
         emit Deposited(amount, block.timestamp);
@@ -121,6 +139,7 @@ contract AaveV3Strategy is Ownable {
      * @notice Withdraw assets from Aave
      * @param amount Amount to withdraw
      * @return Amount actually withdrawn
+     * @dev Handles edge cases where available balance is less than requested
      */
     function withdraw(uint256 amount) external onlyVault returns (uint256) {
         if (amount == 0) revert ZeroAmount();
@@ -153,6 +172,7 @@ contract AaveV3Strategy is Ownable {
     /**
      * @notice Withdraw all assets from Aave
      * @return Amount withdrawn
+     * @dev Uses type(uint256).max to withdraw all available funds
      */
     function withdrawAll() external onlyVault returns (uint256) {
         uint256 balance = aToken.balanceOf(address(this));
@@ -176,6 +196,7 @@ contract AaveV3Strategy is Ownable {
     /**
      * @notice Get total balance in Aave (includes accrued interest)
      * @return Total balance in underlying asset
+     * @dev Returns aToken balance which represents claim on underlying asset plus interest
      */
     function totalAssets() external view returns (uint256) {
         return aToken.balanceOf(address(this));
@@ -183,15 +204,11 @@ contract AaveV3Strategy is Ownable {
 
     /**
      * @notice Get current supply APY from Aave
-     * @return APY in basis points (e.g., 350 = 3.5%, 10000 = 100%)
-     * @dev Calculates APY from Aave's currentLiquidityRate using compound interest formula
-     *      Formula: APY = ((1 + rate/RAY)^(seconds_per_year) - 1) * 10000
-     *      Uses linear approximation for gas efficiency: APY ≈ (rate * seconds_per_year / RAY) * 10000
-     *      This approximation is accurate for typical APY ranges (< 100%)
-     *      RAY = 1e27 (Aave's precision unit)
-     *      Seconds per year = 31,557,600 (365.25 * 24 * 3600)
+     * @return APY in basis points (e.g., 350 = 3.5%)
+     * @dev TODO: Implement by querying Aave ProtocolDataProvider
+     * @dev For now, returns estimated APY placeholder
      */
-    function getCurrentAPY() external view returns (uint256) {
+    function getCurrentAPY() external pure returns (uint256) {
         // TODO: Implement by querying Aave ProtocolDataProvider
         // For now, return estimated APY
         return 350; // 3.5%
@@ -199,6 +216,12 @@ contract AaveV3Strategy is Ownable {
 
     /**
      * @notice Get simplified reserve data from Aave
+     * @return liquidityIndex Current liquidity index
+     * @return liquidityRate Current liquidity rate
+     * @return variableBorrowRate Current variable borrow rate
+     * @return stableBorrowRate Current stable borrow rate
+     * @return lastUpdateTimestamp Last update timestamp
+     * @dev Provides real-time Aave pool data for this asset
      */
     function getReserveData()
         external
@@ -227,19 +250,9 @@ contract AaveV3Strategy is Ownable {
     /* ========== ADMIN FUNCTIONS ========== */
 
     /**
-     * @notice Set vault address (only callable once by owner)
-     * @param _vault Vault contract address
-     * @dev Can only be called if vault is not already set
-     */
-    function setVault(address _vault) external onlyOwner {
-        if (_vault == address(0)) revert ZeroAddress();
-        if (vault != address(0)) revert VaultAlreadySet();
-        vault = _vault;
-    }
-
-    /**
      * @notice Emergency withdraw all funds to owner
      * @dev Only callable by owner in case of emergency
+     * @dev Withdraws all from Aave and transfers to owner
      */
     function emergencyWithdraw() external onlyOwner {
         // Withdraw all from Aave

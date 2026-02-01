@@ -18,6 +18,7 @@ contract SelfProtocolVerifier is SelfVerificationRoot, Ownable {
     /* ========== STATE VARIABLES ========== */
     
     // Verification configuration
+    address public hubV2;
     SelfStructs.VerificationConfigV2 public verificationConfig;
     bytes32 public verificationConfigId;
     
@@ -64,7 +65,7 @@ contract SelfProtocolVerifier is SelfVerificationRoot, Ownable {
         SelfVerificationRoot(_hubV2, _scopeSeed)
         Ownable(msg.sender)
     {
-        // Format and register verification config with Self Hub
+        hubV2 = _hubV2;
         verificationConfig = SelfUtils.formatVerificationConfigV2(_config);
         verificationConfigId = IIdentityVerificationHubV2(_hubV2)
             .setVerificationConfigV2(verificationConfig);
@@ -171,11 +172,9 @@ contract SelfProtocolVerifier is SelfVerificationRoot, Ownable {
         SelfUtils.UnformattedVerificationConfigV2 memory newConfig
     ) external onlyOwner {
         verificationConfig = SelfUtils.formatVerificationConfigV2(newConfig);
-        
-        // Register new config with Self Hub (need hub address)
-        // verificationConfigId = IIdentityVerificationHubV2(hubAddress)
-        //     .setVerificationConfigV2(verificationConfig);
-        
+        verificationConfigId = IIdentityVerificationHubV2(hubV2)
+            .setVerificationConfigV2(verificationConfig);
+
         emit ConfigUpdated(verificationConfigId);
     }
     

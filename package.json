@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@aave/core-v3": "^1.19.3",
+    "@selfxyz/core": "^1.1.0-beta.7",
     "@openzeppelin/contracts": "^5.4.0",
     "@openzeppelin/contracts-upgradeable": "^5.4.0",
     "@selfxyz/contracts": "^1.2.3"
