@@ -1,4 +1,6 @@
+import "dotenv/config";
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
+import "@nomicfoundation/hardhat-verify";
 import { configVariable, defineConfig } from "hardhat/config";
 import process from "node:process";
 
@@ -49,5 +51,32 @@ export default defineConfig({
       accounts: process.env.CELO_PRIVATE_KEY ? [process.env.CELO_PRIVATE_KEY] : [],
       chainId: 44787,
     },
+  },
+  etherscan: {
+    apiKey: {
+      celoMainnet: process.env.CELOSCAN_API_KEY || "",
+      celoAlfajores: process.env.CELOSCAN_API_KEY || "",
+    },
+    customChains: [
+      {
+        network: "celoMainnet",
+        chainId: 42220,
+        urls: {
+          apiURL: "https://api.celoscan.io/api",
+          browserURL: "https://celoscan.io",
+        },
+      },
+      {
+        network: "celoAlfajores",
+        chainId: 44787,
+        urls: {
+          apiURL: "https://api-alfajores.celoscan.io/api",
+          browserURL: "https://alfajores.celoscan.io",
+        },
+      },
+    ],
+  },
+  sourcify: {
+    enabled: true,
   },
 });

@@ -1,5 +1,8 @@
 import "dotenv/config";
 import process from "node:process";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { encodeAbiParameters, encodeFunctionData } from "viem";
 
 import { network } from "hardhat";
 import type { Address } from "viem";
@@ -16,10 +19,11 @@ const CELO_ALFAJORES_ADDRESSES = {
   cUSD: "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1" as Address,
 } as const;
 
-function getAddresses(chainId: bigint) {
-  if (chainId === 42220n) {
+function getAddresses(chainId: bigint | number) {
+  const id = typeof chainId === "bigint" ? chainId : BigInt(chainId);
+  if (id === 42220n) {
     return CELO_MAINNET_ADDRESSES;
-  } else if (chainId === 44787n) {
+  } else if (id === 44787n) {
     return CELO_ALFAJORES_ADDRESSES;
   }
   throw new Error(`Unsupported chain ID: ${chainId}`);
@@ -63,15 +67,56 @@ async function deployVerifier() {
   // - ofacEnabled: bool
   const config = {
     olderThan: BigInt(minimumAge),
-    forbiddenCountries,
-    ofacEnabled,
+    forbiddenCountries: forbiddenCountries,
+    ofacEnabled: ofacEnabled,
   };
 
   console.log("\nDeploying SelfProtocolVerifier contract...");
-  const verifier = await viem.deployContract("SelfProtocolVerifier", {
-    account: deployer.account,
-    args: [hubV2, scopeSeed, config],
+  console.log("Config:", JSON.stringify(config, (_, v) => typeof v === 'bigint' ? v.toString() : v));
+  
+  // Format config as explicit tuple for ABI encoding
+  const configTuple: [bigint, string[], boolean] = [
+    config.olderThan,
+    config.forbiddenCountries,
+    config.ofacEnabled,
+  ];
+  
+  // Read artifact directly
+  const artifactPath = join(process.cwd(), "artifacts", "contracts", "SelfProtocolVerifier.sol", "SelfProtocolVerifier.json");
+  const artifact = JSON.parse(readFileSync(artifactPath, "utf-8"));
+  
+  // Encode constructor parameters
+  const constructorAbi = artifact.abi.find((item: any) => item.type === "constructor");
+  if (!constructorAbi) {
+    throw new Error("Constructor not found in ABI");
+  }
+  
+  const encodedArgs = encodeAbiParameters(
+    constructorAbi.inputs,
+    [hubV2, scopeSeed, configTuple]
+  );
+  
+  // Deploy contract
+  const hash = await deployer.sendTransaction({
+    data: (artifact.bytecode as string) + encodedArgs.slice(2), // Remove 0x prefix from encoded args
   });
+  
+  console.log("Transaction hash:", hash);
+  console.log("Waiting for deployment confirmation...");
+  
+  // Wait for deployment
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  
+  // Get deployed address from receipt
+  const verifierAddress = receipt.contractAddress;
+  
+  if (!verifierAddress) {
+    throw new Error("Contract deployment failed - no contract address in receipt");
+  }
+  
+  console.log("Contract deployed at:", verifierAddress);
+  
+  const verifier = await viem.getContractAt("SelfProtocolVerifier", verifierAddress);
 
   console.log("\n✅ SelfProtocolVerifier deployed!");
   console.log("Address:", verifier.address);
