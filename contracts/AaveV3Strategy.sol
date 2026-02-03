@@ -27,10 +27,9 @@ contract AaveV3Strategy is Ownable {
     IERC20 public immutable aToken; // acUSD token
     IPool public immutable aavePool;
     IPoolAddressesProvider public immutable addressesProvider;
-    
-    // FIX C-01: Made vault immutable to prevent uninitialized state
-    // This ensures vault is always set at deployment and cannot be changed
-    address public immutable vault;
+
+    // Vault contract address (can be set after deployment if needed)
+    address public vault;
 
     /* ========== EVENTS ========== */
 
@@ -52,8 +51,8 @@ contract AaveV3Strategy is Ownable {
      * @param _asset Underlying asset (cUSD)
      * @param _aToken Aave interest-bearing token (acUSD)
      * @param _addressesProvider Aave PoolAddressesProvider
-     * @param _vault Vault contract address (REQUIRED - cannot be zero)
-     * @dev FIX C-01: Vault is now required in constructor and immutable
+     * @param _vault Vault contract address (can be zero, set later via setVault)
+     * @dev Vault can be updated after deployment via setVault()
      */
     constructor(
         address _asset,
@@ -61,12 +60,11 @@ contract AaveV3Strategy is Ownable {
         address _addressesProvider,
         address _vault
     ) Ownable(msg.sender) {
-        // FIX C-01: Added vault to zero address check
+        // Allow vault to be zero address initially (will be set later)
         if (
             _asset == address(0) ||
             _aToken == address(0) ||
-            _addressesProvider == address(0) ||
-            _vault == address(0)
+            _addressesProvider == address(0)
         ) {
             revert ZeroAddress();
         }
@@ -74,8 +72,8 @@ contract AaveV3Strategy is Ownable {
         asset = IERC20(_asset);
         aToken = IERC20(_aToken);
         addressesProvider = IPoolAddressesProvider(_addressesProvider);
-        
-        // FIX C-01: Initialize immutable vault (no longer settable)
+
+        // Set vault (can be zero address, updated via setVault)
         vault = _vault;
 
         // Get Pool address from provider (recommended by Aave)
@@ -96,6 +94,16 @@ contract AaveV3Strategy is Ownable {
         _;
     }
 
+    /**
+     * @notice Set or update the vault address
+     * @param _vault New vault address
+     * @dev Only callable by owner (deployer)
+     */
+    function setVault(address _vault) external onlyOwner {
+        if (_vault == address(0)) revert ZeroAddress();
+        vault = _vault;
+    }
+
     /* ========== VAULT FUNCTIONS ========== */
 
     /**
@@ -112,7 +120,7 @@ contract AaveV3Strategy is Ownable {
 
         // FIX M-02: Check aToken balance before and after supply
         uint256 balanceBefore = aToken.balanceOf(address(this));
-        
+
         // Supply to Aave (receives aTokens automatically)
         aavePool.supply(
             address(asset),
@@ -120,7 +128,7 @@ contract AaveV3Strategy is Ownable {
             address(this),
             0 // No referral code
         );
-        
+
         uint256 balanceAfter = aToken.balanceOf(address(this));
         uint256 received = balanceAfter - balanceBefore;
 

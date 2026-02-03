@@ -14,10 +14,9 @@ contract MockVerifier is ISelfVerifier {
         return _status[user];
     }
 
-    function getNullifier(address) external pure override returns (bytes32) {
+    function getNullifier(address) external pure returns (bytes32) {
         return bytes32(0);
     }
 
-    function verifySelfProof(bytes memory, bytes memory) external pure override {}
+    function verifySelfProof(bytes memory, bytes memory) external pure {}
 }
-

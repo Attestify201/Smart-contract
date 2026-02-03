@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -14,7 +12,7 @@ import "./IAave.sol";
 /**
  * @title AttestifyVault
  * @notice Main vault contract for yield generation with identity verification
- * @dev Upgradeable vault using UUPS pattern, integrates with separate strategy contracts
+ * @dev Non-upgradeable immutable vault, integrates with separate strategy contracts
  * @dev AUDIT FIXES IMPLEMENTED:
  *      - C-02: Fixed share calculation for first deposit
  *      - H-01: Implemented gas-bounded circuit breaker pattern
@@ -28,13 +26,7 @@ import "./IAave.sol";
  * - Strategy: Deploys funds to yield sources (Aave)
  * - Verifier: Handles identity verification (Self Protocol)
  */
-contract AttestifyVault is
-    Initializable,
-    UUPSUpgradeable,
-    OwnableUpgradeable,
-    ReentrancyGuardUpgradeable,
-    PausableUpgradeable
-{
+contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     /* ========== STATE VARIABLES (DO NOT REORDER) ========== */
@@ -65,7 +57,7 @@ contract AttestifyVault is
     uint256 public constant MIN_REBALANCE_INTERVAL = 1 hours; // FIX M-01: Minimum time between rebalances
     uint256 private constant VIRTUAL_SHARES = 1e3; // Virtual liquidity to harden share price
     uint256 private constant VIRTUAL_ASSETS = 1e3;
-    
+
     // FIX H-01: Gas limit for strategy calls to prevent unbounded consumption
     uint256 private constant STRATEGY_GAS_LIMIT = 100000; // 100k gas for external calls
 
@@ -123,41 +115,25 @@ contract AttestifyVault is
 
     /* ========== CONSTRUCTOR ========== */
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    /* ========== INITIALIZER ========== */
-
     /**
-     * @notice Initialize vault (called once after proxy deployment)
+     * @notice Initialize vault (immutable, cannot be changed)
      * @param _asset Underlying asset (cUSD)
      * @param _strategy Aave strategy contract
-     * @param _verifier Self verifier contract
+     * @param _verifier Self verifier contract (optional, can be zero)
      * @param _maxUserDeposit Max deposit per user
      * @param _maxTotalDeposit Max total TVL
-     * @dev Sets up all contract dependencies and initial parameters
+     * @dev Non-upgradeable - contract code is permanent and cannot be changed
      */
-    function initialize(
+    constructor(
         address _asset,
         address _strategy,
         address _verifier,
         uint256 _maxUserDeposit,
         uint256 _maxTotalDeposit
-    ) external initializer {
-        if (
-            _asset == address(0) ||
-            _strategy == address(0) ||
-            _verifier == address(0)
-        ) {
+    ) Ownable(msg.sender) {
+        if (_asset == address(0) || _strategy == address(0)) {
             revert ZeroAddress();
         }
-
-        __Ownable_init(msg.sender);
-        __UUPSUpgradeable_init();
-        __ReentrancyGuard_init();
-        __Pausable_init();
 
         asset = IERC20(_asset);
         strategy = _strategy;
@@ -168,23 +144,12 @@ contract AttestifyVault is
         rebalancer = msg.sender;
     }
 
-    /* ========== UPGRADE AUTHORIZATION ========== */
-
-    /**
-     * @notice Authorize contract upgrades
-     * @param newImplementation Address of new implementation
-     * @dev Only owner can upgrade the contract
-     */
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
-
     /**
      * @notice Get contract version
      * @return Version string
      */
     function version() external pure returns (string memory) {
-        return "1.0.1"; // Updated version after audit fixes
+        return "1.1.0"; // Non-upgradeable immutable version
     }
 
     /* ========== MODIFIERS ========== */
@@ -194,8 +159,11 @@ contract AttestifyVault is
      * @dev Calls verifier contract to check user status
      */
     modifier onlyVerified() {
-        if (!ISelfVerifier(verifier).isVerified(msg.sender)) {
-            revert NotVerified();
+        // If no verifier is configured, skip verification (integration removed/optional)
+        if (verifier != address(0)) {
+            if (!ISelfVerifier(verifier).isVerified(msg.sender)) {
+                revert NotVerified();
+            }
         }
         _;
     }
@@ -406,9 +374,9 @@ contract AttestifyVault is
 
         // FIX H-01: Use try-catch with gas limit to prevent unbounded consumption
         // Circuit breaker: if strategy fails or exceeds gas, return 0
-        try IVaultYieldStrategy(strategy).totalAssets{gas: STRATEGY_GAS_LIMIT}() returns (
-            uint256 balance
-        ) {
+        try
+            IVaultYieldStrategy(strategy).totalAssets{gas: STRATEGY_GAS_LIMIT}()
+        returns (uint256 balance) {
             return balance;
         } catch {
             // Strategy call failed - circuit breaker activates
@@ -451,7 +419,7 @@ contract AttestifyVault is
      */
     function _convertToShares(uint256 assets) internal view returns (uint256) {
         uint256 _totalAssets = totalAssets();
-        
+
         // FIX C-02: Handle first deposit case - return assets directly for 1:1 ratio
         if (_totalAssets == 0 || totalShares == 0) {
             return assets;
@@ -459,7 +427,7 @@ contract AttestifyVault is
 
         uint256 adjustedAssets = _totalAssets + VIRTUAL_ASSETS;
         uint256 adjustedShares = totalShares + VIRTUAL_SHARES;
-        
+
         return (assets * adjustedShares) / adjustedAssets;
     }
 
@@ -472,16 +440,16 @@ contract AttestifyVault is
      */
     function _convertToAssets(uint256 _shares) internal view returns (uint256) {
         if (_shares == 0) return 0;
-        
+
         // FIX C-02: On first deposit, return shares directly (1:1 ratio)
         // This matches _convertToShares behavior for consistency
         if (totalShares == 0) return _shares;
-        
+
         uint256 adjustedShares = totalShares + VIRTUAL_SHARES;
         uint256 adjustedAssets = totalAssets() + VIRTUAL_ASSETS;
-        
+
         if (adjustedAssets == 0) return 0;
-        
+
         return (_shares * adjustedAssets) / adjustedShares;
     }
 
@@ -612,7 +580,7 @@ contract AttestifyVault is
     }
 
     /* ========== STORAGE GAP ========== */
-    
+
     /**
      * @dev Storage gap for future upgrades
      * @dev Reduced by 1 to account for STRATEGY_GAS_LIMIT constant

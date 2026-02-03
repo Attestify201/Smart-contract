@@ -71,7 +71,9 @@ async function loadConfig(chainId: bigint): Promise<DeployConfig> {
     asset: getAddress("ASSET_ADDRESS", defaults?.asset),
     aToken: getAddress("ATOKEN_ADDRESS", defaults?.aToken),
     addressesProvider: getAddress("AAVE_PROVIDER_ADDRESS", defaults?.addressesProvider),
-    verifier: requireAddress("VERIFIER_ADDRESS"), // Must be provided (deploy verifier first)
+    verifier: process.env.VERIFIER_ADDRESS
+      ? getAddress("VERIFIER_ADDRESS")
+      : ("0x0000000000000000000000000000000000000000" as Address),
     maxUserDeposit: getAmountEnv("MAX_USER_DEPOSIT", assetDecimals, "1000"),
     maxTotalDeposit: getAmountEnv("MAX_TOTAL_DEPOSIT", assetDecimals, "10000"),
     assetDecimals,
@@ -98,43 +100,28 @@ console.log("- Max Total Deposit:", params.maxTotalDeposit.toString());
 console.log("");
 
 console.log("Deploying AaveV3Strategy...");
-// Deploy strategy with zero vault address (will be set after proxy deployment)
 const strategy = await viem.deployContract(
   "AaveV3Strategy",
   [params.asset, params.aToken, params.addressesProvider, "0x0000000000000000000000000000000000000000"],
   { account: deployer.account }
 );
+console.log("Strategy deployed at:", strategy.address);
 
-console.log("Deploying AttestifyVault implementation...");
-const vaultImplementation = await viem.deployContract(
+console.log("\nDeploying AttestifyVault (non-upgradeable, immutable)...");
+const vault = await viem.deployContract(
   "AttestifyVault",
-  [],
-  { account: deployer.account }
-);
-
-const initData = encodeFunctionData({
-  abi: vaultImplementation.abi,
-  functionName: "initialize",
-  args: [
+  [
     params.asset,
     strategy.address,
     params.verifier,
     params.maxUserDeposit,
     params.maxTotalDeposit,
   ],
-});
-
-console.log("Deploying ERC1967 proxy...");
-const proxy = await viem.deployContract(
-  "TestProxy",
-  [vaultImplementation.address, initData],
   { account: deployer.account }
 );
+console.log("Vault deployed at:", vault.address);
 
-const vault = await viem.getContractAt("AttestifyVault", proxy.address);
-console.log("Vault proxy deployed at:", vault.address);
-
-console.log("Linking strategy to vault...");
+console.log("\nLinking strategy to vault...");
 await strategy.write.setVault([vault.address], {
   account: deployer.account,
 });
@@ -146,7 +133,7 @@ if (params.rebalancer && params.rebalancer !== deployer.account.address) {
   });
 }
 
-if (params.authorizeVaultOnVerifier) {
+if (params.authorizeVaultOnVerifier && params.verifier !== "0x0000000000000000000000000000000000000000") {
   console.log("Authorizing vault on verifier...");
   const verifier = await viem.getContractAt("SelfProtocolVerifier", params.verifier);
   await verifier.write.authorizeCaller([vault.address], {
@@ -154,10 +141,10 @@ if (params.authorizeVaultOnVerifier) {
   });
 }
 
-console.log("\nDeployment complete:");
-console.log("- Strategy:", strategy.address);
-console.log("- Vault Implementation:", vaultImplementation.address);
-console.log("- Vault Proxy:", vault.address);
+console.log("\n✅ Deployment complete:");
+console.log("- Strategy: ", strategy.address);
+console.log("- Vault (MAIN): ", vault.address);
+console.log("\n🔒 Contract is IMMUTABLE (not upgradeable)");
 
 console.log("\nRemember to:");
 console.log("1. Fund the vault with reserves if needed.");
