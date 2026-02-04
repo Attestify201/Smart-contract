@@ -15,16 +15,6 @@ interface IAaveStrategy {
 }
 
 /**
- * @title ISelfVerifier
- * @notice Interface for Self Protocol verification
- */
-interface ISelfVerifier {
-    function isVerified(address user) external view returns (bool);
-    function getNullifier(address user) external view returns (bytes32);
-    function verifySelfProof(bytes memory proofPayload, bytes memory userContextData) external;
-}
-
-/**
  * @title IAttestifyVault
  * @notice Interface for main vault contract
  */

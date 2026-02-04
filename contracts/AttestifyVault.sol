@@ -8,18 +8,18 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 import "./IAave.sol";
 
 /**
  * @title AttestifyVault
- * @notice Main vault contract for yield generation with identity verification
+ * @notice Main vault contract for yield generation
  * @dev Upgradeable vault using UUPS pattern, integrates with separate strategy contracts
  * 
  * Architecture:
  * - Vault: Holds user funds, manages shares
  * - Strategy: Deploys funds to yield sources (Aave)
- * - Verifier: Handles identity verification (Self Protocol)
  */
 contract AttestifyVault is
     Initializable,
@@ -35,7 +35,6 @@ contract AttestifyVault is
     // Core contracts
     IERC20 public asset;                    // cUSD token
     address public strategy;                // Aave strategy contract
-    address public verifier;                // Self verifier contract
     
     // Vault accounting
     uint256 public totalShares;
@@ -73,12 +72,10 @@ contract AttestifyVault is
     event Withdrawn(address indexed user, uint256 assets, uint256 shares);
     event Rebalanced(uint256 strategyBalance, uint256 reserveBalance, uint256 timestamp);
     event StrategyUpdated(address indexed oldStrategy, address indexed newStrategy);
-    event VerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
     event LimitsUpdated(uint256 maxUser, uint256 maxTotal);
     
     /* ========== ERRORS ========== */
     
-    error NotVerified();
     error InvalidAmount();
     error ExceedsUserLimit();
     error ExceedsTVLLimit();
@@ -102,18 +99,16 @@ contract AttestifyVault is
      * @notice Initialize vault (called once after proxy deployment)
      * @param _asset Underlying asset (cUSD)
      * @param _strategy Aave strategy contract
-     * @param _verifier Self verifier contract
      * @param _maxUserDeposit Max deposit per user
      * @param _maxTotalDeposit Max total TVL
      */
     function initialize(
         address _asset,
         address _strategy,
-        address _verifier,
         uint256 _maxUserDeposit,
         uint256 _maxTotalDeposit
     ) external initializer {
-        if (_asset == address(0) || _strategy == address(0) || _verifier == address(0)) {
+        if (_asset == address(0) || _strategy == address(0)) {
             revert ZeroAddress();
         }
         
@@ -124,7 +119,6 @@ contract AttestifyVault is
         
         asset = IERC20(_asset);
         strategy = _strategy;
-        verifier = _verifier;
         maxUserDeposit = _maxUserDeposit;
         maxTotalDeposit = _maxTotalDeposit;
         treasury = msg.sender;
@@ -143,14 +137,9 @@ contract AttestifyVault is
         return "1.0.0";
     }
     
-    /* ========== MODIFIERS ========== */
+   
     
-    modifier onlyVerified() {
-        if (!ISelfVerifier(verifier).isVerified(msg.sender)) {
-            revert NotVerified();
-        }
-        _;
-    }
+    
     
     /* ========== DEPOSIT FUNCTIONS ========== */
     
@@ -158,12 +147,12 @@ contract AttestifyVault is
      * @notice Deposit cUSD to earn yield
      * @param assets Amount of cUSD to deposit
      * @return sharesIssued Shares minted to user
+     * @dev Requires prior ERC20 approval. Use depositWithPermit() for gasless approval.
      */
     function deposit(uint256 assets) 
         external 
         nonReentrant 
-        whenNotPaused 
-        onlyVerified 
+        whenNotPaused  
         returns (uint256 sharesIssued)
     {
         // Validation
@@ -182,6 +171,69 @@ contract AttestifyVault is
         totalDeposited += assets;
         
         // Transfer assets from user
+        asset.safeTransferFrom(msg.sender, address(this), assets);
+        
+        // Deploy to strategy (keeping reserve)
+        _deployToStrategy(assets);
+        
+        emit Deposited(msg.sender, assets, sharesIssued);
+    }
+    
+    /**
+     * @notice Deposit with EIP-2612 permit (approve + deposit in one transaction)
+     * @param assets Amount of cUSD to deposit
+     * @param deadline Permit signature deadline (must be >= block.timestamp)
+     * @param v Permit signature v component
+     * @param r Permit signature r component
+     * @param s Permit signature s component
+     * @return sharesIssued Shares minted to user
+     * @dev Allows gasless approval via EIP-2612 permit. 
+     *      The permit function signature matches EIP-2612 standard:
+     *      permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+     *      Reference: https://eips.ethereum.org/EIPS/eip-2612
+     */
+    function depositWithPermit(
+        uint256 assets,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    )
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 sharesIssued)
+    {
+        // Validation
+        if (assets < MIN_DEPOSIT) revert InvalidAmount();
+        if (assets > maxUserDeposit) revert ExceedsUserLimit();
+        if (totalAssets() + assets > maxTotalDeposit) revert ExceedsTVLLimit();
+        if (block.timestamp > deadline) revert InvalidAmount(); // Deadline must be in the future
+        
+        // Call permit to approve this contract to spend tokens on behalf of msg.sender
+        // This follows EIP-2612 standard: permit(owner, spender, value, deadline, v, r, s)
+        // Reference: https://www.quicknode.com/guides/ethereum-development/transactions/how-to-use-erc20-permit-approval
+        IERC20Permit(address(asset)).permit(
+            msg.sender,        // owner: token owner signing the permit
+            address(this),     // spender: this vault contract
+            assets,            // value: amount to approve
+            deadline,          // deadline: signature expiration timestamp
+            v,                 // v: signature component
+            r,                 // r: signature component
+            s                  // s: signature component
+        );
+        
+        // Calculate shares
+        sharesIssued = _convertToShares(assets);
+        
+        // Update state
+        shares[msg.sender] += sharesIssued;
+        totalShares += sharesIssued;
+        userData[msg.sender].totalDeposited += assets;
+        userData[msg.sender].lastActionTime = block.timestamp;
+        totalDeposited += assets;
+        
+        // Transfer assets from user (now approved via permit)
         asset.safeTransferFrom(msg.sender, address(this), assets);
         
         // Deploy to strategy (keeping reserve)
@@ -408,13 +460,6 @@ contract AttestifyVault is
         address old = strategy;
         strategy = _strategy;
         emit StrategyUpdated(old, _strategy);
-    }
-    
-    function setVerifier(address _verifier) external onlyOwner {
-        if (_verifier == address(0)) revert ZeroAddress();
-        address old = verifier;
-        verifier = _verifier;
-        emit VerifierUpdated(old, _verifier);
     }
     
     function setLimits(uint256 _maxUser, uint256 _maxTotal) external onlyOwner {

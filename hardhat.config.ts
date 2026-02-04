@@ -1,4 +1,5 @@
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
+import "@nomicfoundation/hardhat-verify";
 import { configVariable, defineConfig } from "hardhat/config";
 import process from "node:process";
 
