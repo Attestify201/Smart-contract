@@ -12,7 +12,6 @@ describe("AttestifyVault", async () => {
 
   async function deployFixture() {
     const asset = await viem.deployContract("MockERC20", ["Mock USD", "MUSD"]);
-    const verifier = await viem.deployContract("MockVerifier");
     const strategy = await viem.deployContract("MockStrategy", [asset.address]);
     const vaultImpl = await viem.deployContract("AttestifyVault");
     const maxUser = 1_000_000n * ONE;
@@ -21,7 +20,7 @@ describe("AttestifyVault", async () => {
     const initCallData = encodeFunctionData({
       abi: vaultImpl.abi,
       functionName: "initialize",
-      args: [asset.address, strategy.address, verifier.address, maxUser, maxTotal],
+      args: [asset.address, strategy.address, maxUser, maxTotal],
     });
 
     const proxy = await viem.deployContract("TestProxy", [
@@ -40,15 +39,7 @@ describe("AttestifyVault", async () => {
       });
     }
 
-    return { asset, verifier, strategy, vault };
-  }
-
-  async function verifyUsers(verifier: any, users: string[]) {
-    for (const user of users) {
-      await verifier.write.setVerified([user, true], {
-        account: deployer.account,
-      });
-    }
+    return { asset, strategy, vault };
   }
 
   async function expectRevert(promise: Promise<unknown>, reason?: string) {
@@ -78,19 +69,13 @@ describe("AttestifyVault", async () => {
     });
   }
 
-  it("blocks unverified deposits", async () => {
-    const { asset, verifier, vault } = await deployFixture();
+  it("allows deposits without verification", async () => {
+    const { asset, vault } = await deployFixture();
     const depositAmount = 100n * ONE;
 
     await asset.write.approve([vault.address, depositAmount], {
       account: alice.account,
     });
-
-    await assert.rejects(
-      vault.write.deposit([depositAmount], { account: alice.account }),
-    );
-
-    await verifyUsers(verifier, [alice.account.address]);
 
     await vault.write.deposit([depositAmount], { account: alice.account });
     const balance = await vault.read.balanceOf([alice.account.address]);
@@ -98,8 +83,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("protects share price against donation manipulation", async () => {
-    const { asset, verifier, vault } = await deployFixture();
-    await verifyUsers(verifier, [alice.account.address, bob.account.address]);
+    const { asset, vault } = await deployFixture();
 
     const smallDeposit = 1n * ONE;
     const donation = 1_000n * ONE;
@@ -125,8 +109,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("enforces minimum assets out on withdrawals", async () => {
-    const { asset, verifier, vault } = await deployFixture();
-    await verifyUsers(verifier, [bob.account.address]);
+    const { asset, vault } = await deployFixture();
 
     const depositAmount = 500n * ONE;
 
@@ -146,8 +129,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("allows withdrawing entire balance via withdrawAll", async () => {
-    const { asset, verifier, vault } = await deployFixture();
-    await verifyUsers(verifier, [alice.account.address]);
+    const { asset, vault } = await deployFixture();
 
     const depositAmount = 800n * ONE;
 
@@ -166,8 +148,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("tops up reserves when they fall below the target ratio", async () => {
-    const { asset, verifier, strategy, vault } = await deployFixture();
-    await verifyUsers(verifier, [alice.account.address]);
+    const { asset, strategy, vault } = await deployFixture();
 
     const depositAmount = 1_000n * ONE;
 
@@ -191,11 +172,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("enforces deposit limits and pause controls", async () => {
-    const { asset, verifier, vault } = await deployFixture();
-    await verifyUsers(verifier, [
-      alice.account.address,
-      bob.account.address,
-    ]);
+    const { asset, vault } = await deployFixture();
 
     const userLimit = 500n * ONE;
     const totalLimit = 1_000n * ONE;
@@ -241,8 +218,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("allows owner or delegated rebalancer to maintain reserves", async () => {
-    const { asset, verifier, strategy, vault } = await deployFixture();
-    await verifyUsers(verifier, [alice.account.address]);
+    const { asset, strategy, vault } = await deployFixture();
 
     const depositAmount = 2_000n * ONE;
     await asset.write.approve([vault.address, depositAmount], {
@@ -276,8 +252,7 @@ describe("AttestifyVault", async () => {
   });
 
   it("supports emergency withdrawals when paused", async () => {
-    const { asset, verifier, vault } = await deployFixture();
-    await verifyUsers(verifier, [alice.account.address]);
+    const { asset, vault } = await deployFixture();
 
     const depositAmount = 1_000n * ONE;
     await asset.write.approve([vault.address, depositAmount], {
@@ -300,29 +275,14 @@ describe("AttestifyVault", async () => {
     assert.equal(ownerAfter - ownerBefore, reserveBalance);
   });
 
-  it("lets the owner rotate verifier and strategy contracts", async () => {
-    const { asset, verifier, strategy, vault } = await deployFixture();
-    await verifyUsers(verifier, [alice.account.address]);
+  it("lets the owner rotate strategy contracts", async () => {
+    const { asset, strategy, vault } = await deployFixture();
 
     const firstDeposit = 500n * ONE;
     await asset.write.approve([vault.address, firstDeposit], {
       account: alice.account,
     });
     await vault.write.deposit([firstDeposit], { account: alice.account });
-
-    const newVerifier = await viem.deployContract("MockVerifier");
-    await vault.write.setVerifier([newVerifier.address], {
-      account: deployer.account,
-    });
-
-    await expectRevert(
-      vault.write.deposit([100n * ONE], { account: alice.account }),
-      "NotVerified",
-    );
-
-    await newVerifier.write.setVerified([alice.account.address, true], {
-      account: deployer.account,
-    });
 
     await asset.write.approve([vault.address, 200n * ONE], {
       account: alice.account,
@@ -339,9 +299,6 @@ describe("AttestifyVault", async () => {
       account: deployer.account,
     });
 
-    await newVerifier.write.setVerified([bob.account.address, true], {
-      account: deployer.account,
-    });
     await asset.write.approve([vault.address, 1_000n * ONE], {
       account: bob.account,
     });
@@ -364,12 +321,6 @@ describe("AttestifyVault", async () => {
     );
     await expectRevert(
       vault.write.setStrategy([alice.account.address], {
-        account: alice.account,
-      }),
-      "OwnableUnauthorizedAccount",
-    );
-    await expectRevert(
-      vault.write.setVerifier([alice.account.address], {
         account: alice.account,
       }),
       "OwnableUnauthorizedAccount",
