@@ -53,7 +53,7 @@ contract AttestifyVault is
     uint256 public constant MIN_DEPOSIT = 1e18;        // 1 cUSD
     uint256 public maxUserDeposit;                      // Per user limit
     uint256 public maxTotalDeposit;                     // Total TVL limit
-    uint256 public constant RESERVE_RATIO = 10;         // 10% kept in vault
+    uint256 public constant RESERVE_RATIO_BPS = 1000;  // 10% kept in vault (1000 basis points = 10%)
     uint256 private constant VIRTUAL_SHARES = 1e3;      // Virtual liquidity to harden share price
     uint256 private constant VIRTUAL_ASSETS = 1e3;
     
@@ -246,7 +246,7 @@ contract AttestifyVault is
      * @notice Internal function to deploy assets to strategy
      */
     function _deployToStrategy(uint256 amount) internal {
-        uint256 reserveAmount = (amount * RESERVE_RATIO) / 100;
+        uint256 reserveAmount = (amount * RESERVE_RATIO_BPS) / 10000;
         uint256 deployAmount = amount - reserveAmount;
         
         if (deployAmount > 0) {
@@ -342,7 +342,7 @@ contract AttestifyVault is
         uint256 _totalAssets = totalAssets();
         if (_totalAssets == 0) return;
 
-        uint256 targetReserve = (_totalAssets * RESERVE_RATIO) / 100;
+        uint256 targetReserve = (_totalAssets * RESERVE_RATIO_BPS) / 10000;
         uint256 currentReserve = asset.balanceOf(address(this));
 
         if (currentReserve < targetReserve) {
@@ -425,7 +425,7 @@ contract AttestifyVault is
         require(msg.sender == owner() || msg.sender == rebalancer, "Unauthorized");
         
         uint256 _totalAssets = totalAssets();
-        uint256 targetReserve = (_totalAssets * RESERVE_RATIO) / 100;
+        uint256 targetReserve = (_totalAssets * RESERVE_RATIO_BPS) / 10000;
         uint256 currentReserve = asset.balanceOf(address(this));
         
         if (currentReserve < targetReserve) {

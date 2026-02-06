@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
-    "deploy": "hardhat run scripts/deploy-vault.ts",
-    "deploy:verifier": "hardhat run scripts/deploy-verifier.ts",
+    "deploy": "hardhat run scripts/deploy-vault.ts --network celoMainnet",
+    "deploy:verifier": "hardhat run scripts/deploy-verifier.ts --network celoMainnet",
+    "verify": "hardhat run scripts/verify-contracts.ts --network celoMainnet",
     "query-aave": "hardhat run scripts/query-aave-addresses.ts"
   },
   "repository": {
@@ -35,7 +36,6 @@
   "dependencies": {
     "@aave/core-v3": "^1.19.3",
     "@openzeppelin/contracts": "^5.4.0",
-    "@openzeppelin/contracts-upgradeable": "^5.4.0",
-    "@selfxyz/contracts": "^1.2.3"
+    "@openzeppelin/contracts-upgradeable": "^5.4.0"
   }
 }
