@@ -3,9 +3,11 @@
 
 #dotenv
 .env
+.env.local
 
 # Compilation output
 /dist
+
 
 # pnpm deploy output
 /bundle
