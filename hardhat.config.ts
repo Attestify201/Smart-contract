@@ -76,7 +76,9 @@ export default defineConfig({
       },
     ],
   },
-  sourcify: {
-    enabled: true,
+  verify: {
+    sourcify: {
+      enabled: true,
+    },
   },
 });

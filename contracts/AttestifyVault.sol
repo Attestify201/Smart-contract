@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
@@ -12,27 +14,20 @@ import "./IAave.sol";
 
 /**
  * @title AttestifyVault
-<<<<<<< HEAD
- * @notice Main vault contract for yield generation with identity verification
- * @dev Non-upgradeable immutable vault, integrates with separate strategy contracts
- * @dev AUDIT FIXES IMPLEMENTED:
- *      - C-02: Fixed share calculation for first deposit
- *      - H-01: Implemented gas-bounded circuit breaker pattern
- *      - M-01: Added front-running protection for rebalancing
- *      - L-01: Changed to basis points (1000 = 10%) for precision
- *      - I-01: Standardized all error handling with custom errors
- *      - I-02: Added comprehensive NatSpec documentation
- *
-=======
  * @notice Main vault contract for yield generation
  * @dev Upgradeable vault using UUPS pattern, integrates with separate strategy contracts
  * 
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
  * Architecture:
  * - Vault: Holds user funds, manages shares
  * - Strategy: Deploys funds to yield sources (Aave)
  */
-contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
+contract AttestifyVault is
+    Initializable,
+    UUPSUpgradeable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
+{
     using SafeERC20 for IERC20;
 
     /* ========== STATE VARIABLES (DO NOT REORDER) ========== */
@@ -61,14 +56,7 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant RESERVE_RATIO_BPS = 1000;  // 10% kept in vault (1000 basis points = 10%)
     uint256 private constant VIRTUAL_SHARES = 1e3;      // Virtual liquidity to harden share price
     uint256 private constant VIRTUAL_ASSETS = 1e3;
-<<<<<<< HEAD
-
-    // FIX H-01: Gas limit for strategy calls to prevent unbounded consumption
-    uint256 private constant STRATEGY_GAS_LIMIT = 100000; // 100k gas for external calls
-
-=======
     
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
     // Admin
     address public treasury;
     address public rebalancer;                          // Can be AI agent
@@ -99,9 +87,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
     error StrategyDepositMismatch(uint256 expected, uint256 actual);
     
     /* ========== CONSTRUCTOR ========== */
-<<<<<<< HEAD
-
-=======
     
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -110,33 +95,18 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
     
     /* ========== INITIALIZER ========== */
     
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
     /**
-     * @notice Initialize vault (immutable, cannot be changed)
+     * @notice Initialize vault (called once after proxy deployment)
      * @param _asset Underlying asset (cUSD)
      * @param _strategy Aave strategy contract
-<<<<<<< HEAD
-     * @param _verifier Self verifier contract (optional, can be zero)
      * @param _maxUserDeposit Max deposit per user
      * @param _maxTotalDeposit Max total TVL
-     * @dev Non-upgradeable - contract code is permanent and cannot be changed
-=======
-     * @param _maxUserDeposit Max deposit per user
-     * @param _maxTotalDeposit Max total TVL
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
      */
-    constructor(
+    function initialize(
         address _asset,
         address _strategy,
         uint256 _maxUserDeposit,
         uint256 _maxTotalDeposit
-<<<<<<< HEAD
-    ) Ownable(msg.sender) {
-        if (_asset == address(0) || _strategy == address(0)) {
-            revert ZeroAddress();
-        }
-
-=======
     ) external initializer {
         if (_asset == address(0) || _strategy == address(0)) {
             revert ZeroAddress();
@@ -147,7 +117,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
         __ReentrancyGuard_init();
         __Pausable_init();
         
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
         asset = IERC20(_asset);
         strategy = _strategy;
         maxUserDeposit = _maxUserDeposit;
@@ -155,15 +124,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
         treasury = msg.sender;
         rebalancer = msg.sender;
     }
-<<<<<<< HEAD
-
-    /**
-     * @notice Get contract version
-     * @return Version string
-     */
-    function version() external pure returns (string memory) {
-        return "1.1.0"; // Non-upgradeable immutable version
-=======
     
     /* ========== UPGRADE AUTHORIZATION ========== */
     
@@ -175,7 +135,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
     
     function version() external pure returns (string memory) {
         return "1.0.0";
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
     }
     
    
@@ -190,16 +149,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
      * @return sharesIssued Shares minted to user
      * @dev Requires prior ERC20 approval. Use depositWithPermit() for gasless approval.
      */
-<<<<<<< HEAD
-    modifier onlyVerified() {
-        // If no verifier is configured, skip verification (integration removed/optional)
-        if (verifier != address(0)) {
-            if (!ISelfVerifier(verifier).isVerified(msg.sender)) {
-                revert NotVerified();
-            }
-        }
-        _;
-=======
     function deposit(uint256 assets) 
         external 
         nonReentrant 
@@ -228,7 +177,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
         _deployToStrategy(assets);
         
         emit Deposited(msg.sender, assets, sharesIssued);
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
     }
     
     /**
@@ -411,31 +359,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
      */
     function totalAssets() public view returns (uint256) {
         uint256 reserveBalance = asset.balanceOf(address(this));
-<<<<<<< HEAD
-        uint256 strategyBalance = _getStrategyBalanceSafe();
-        return reserveBalance + strategyBalance;
-    }
-
-    /**
-     * @notice Safely get strategy balance with circuit breaker
-     * @return Strategy balance or 0 if call fails
-     * @dev FIX H-01: Implements gas-bounded circuit breaker pattern
-     * @dev Limits gas to prevent malicious strategy from consuming unbounded gas
-     */
-    function _getStrategyBalanceSafe() internal view returns (uint256) {
-        if (strategy == address(0)) return 0;
-
-        // FIX H-01: Use try-catch with gas limit to prevent unbounded consumption
-        // Circuit breaker: if strategy fails or exceeds gas, return 0
-        try
-            IVaultYieldStrategy(strategy).totalAssets{gas: STRATEGY_GAS_LIMIT}()
-        returns (uint256 balance) {
-            return balance;
-        } catch {
-            // Strategy call failed - circuit breaker activates
-            // Return 0 for strategy balance, vault continues with reserve only
-            return 0;
-=======
         
         uint256 strategyBalance = 0;
         if (strategy != address(0)) {
@@ -444,7 +367,6 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
             } catch {
                 strategyBalance = 0;
             }
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
         }
         
         return reserveBalance + strategyBalance;
@@ -479,21 +401,8 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
      * @notice Convert assets to shares
      */
     function _convertToShares(uint256 assets) internal view returns (uint256) {
-<<<<<<< HEAD
-        uint256 _totalAssets = totalAssets();
-
-        // FIX C-02: Handle first deposit case - return assets directly for 1:1 ratio
-        if (_totalAssets == 0 || totalShares == 0) {
-            return assets;
-        }
-
-        uint256 adjustedAssets = _totalAssets + VIRTUAL_ASSETS;
-        uint256 adjustedShares = totalShares + VIRTUAL_SHARES;
-
-=======
         uint256 adjustedShares = totalShares + VIRTUAL_SHARES;
         uint256 adjustedAssets = totalAssets() + VIRTUAL_ASSETS;
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
         return (assets * adjustedShares) / adjustedAssets;
     }
     
@@ -501,23 +410,9 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
      * @notice Convert shares to assets
      */
     function _convertToAssets(uint256 _shares) internal view returns (uint256) {
-<<<<<<< HEAD
-        if (_shares == 0) return 0;
-
-        // FIX C-02: On first deposit, return shares directly (1:1 ratio)
-        // This matches _convertToShares behavior for consistency
-        if (totalShares == 0) return _shares;
-
-        uint256 adjustedShares = totalShares + VIRTUAL_SHARES;
-        uint256 adjustedAssets = totalAssets() + VIRTUAL_ASSETS;
-
-        if (adjustedAssets == 0) return 0;
-
-=======
         if (totalShares == 0) return 0;
         uint256 adjustedShares = totalShares + VIRTUAL_SHARES;
         uint256 adjustedAssets = totalAssets() + VIRTUAL_ASSETS;
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
         return (_shares * adjustedAssets) / adjustedShares;
     }
     
@@ -590,19 +485,7 @@ contract AttestifyVault is Ownable, ReentrancyGuard, Pausable {
         require(paused(), "Must be paused");
         IERC20(token).safeTransfer(owner(), amount);
     }
-<<<<<<< HEAD
-
-    /* ========== STORAGE GAP ========== */
-
-    /**
-     * @dev Storage gap for future upgrades
-     * @dev Reduced by 1 to account for STRATEGY_GAS_LIMIT constant
-     */
-    uint256[49] private __gap;
-}
-=======
     
     /* ========== STORAGE GAP ========== */
     uint256[50] private __gap;
 }
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7

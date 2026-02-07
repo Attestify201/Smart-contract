@@ -21,3 +21,6 @@
 
 # Hardhat coverage reports
 /coverage
+
+# Deployment output (addresses)
+/deployment-addresses.json

@@ -1,5 +1,7 @@
 import "dotenv/config";
 import process from "node:process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { network } from "hardhat";
 import { encodeFunctionData, parseUnits, createWalletClient, http } from "viem";
@@ -53,15 +55,15 @@ function getAmountEnv(name: string, decimals: number, fallback: string): bigint 
 
 async function loadConfig(chainId: bigint): Promise<DeployConfig> {
   const assetDecimals = Number(process.env.ASSET_DECIMALS ?? "18");
-  
+
   // Get defaults based on chain
   // Convert to number for comparison to handle both bigint and number
   const chainIdNum = Number(chainId);
   const defaults = chainIdNum === 42220
-    ? CELO_MAINNET_DEFAULTS 
+    ? CELO_MAINNET_DEFAULTS
     : chainIdNum === 44787
-    ? CELO_ALFAJORES_DEFAULTS 
-    : null;
+      ? CELO_ALFAJORES_DEFAULTS
+      : null;
 
   if (!defaults) {
     console.warn(`⚠️  Unknown chain (chainId: ${chainIdNum}), using env vars only (no defaults)`);
@@ -71,12 +73,6 @@ async function loadConfig(chainId: bigint): Promise<DeployConfig> {
     asset: getAddress("ASSET_ADDRESS", defaults?.asset),
     aToken: getAddress("ATOKEN_ADDRESS", defaults?.aToken),
     addressesProvider: getAddress("AAVE_PROVIDER_ADDRESS", defaults?.addressesProvider),
-<<<<<<< HEAD
-    verifier: process.env.VERIFIER_ADDRESS
-      ? getAddress("VERIFIER_ADDRESS")
-      : ("0x0000000000000000000000000000000000000000" as Address),
-=======
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
     maxUserDeposit: getAmountEnv("MAX_USER_DEPOSIT", assetDecimals, "1000"),
     maxTotalDeposit: getAmountEnv("MAX_TOTAL_DEPOSIT", assetDecimals, "10000"),
     assetDecimals,
@@ -86,9 +82,9 @@ async function loadConfig(chainId: bigint): Promise<DeployConfig> {
 
 // Determine chainId based on network name (before connecting)
 // This avoids RPC calls that might timeout
-const networkName = process.argv.find(arg => arg.includes("--network"))?.split("=")[1] || 
-                    process.argv[process.argv.indexOf("--network") + 1] ||
-                    "celoMainnet";
+const networkName = process.argv.find(arg => arg.includes("--network"))?.split("=")[1] ||
+  process.argv[process.argv.indexOf("--network") + 1] ||
+  "celoMainnet";
 
 let chainId: bigint;
 if (networkName === "celoMainnet" || networkName.includes("mainnet")) {
@@ -135,124 +131,85 @@ console.log("");
 
 // Get contract artifacts from Hardhat
 const hre = await import("hardhat");
+
 const strategyArtifact = await hre.artifacts.readArtifact("AaveV3Strategy");
 const vaultArtifact = await hre.artifacts.readArtifact("AttestifyVault");
-const proxyArtifact = await hre.artifacts.readArtifact("TestProxy");
 
+
+
+console.log("Deploying AttestifyVault...");
+const vaultHash = await deployer.deployContract({
+  abi: vaultArtifact.abi,
+  bytecode: vaultArtifact.bytecode as `0x${string}`,
+  // No constructor args for upgradeable contract
+  gas: 8000000n,
+});
+const vaultReceipt = await publicClient.waitForTransactionReceipt({ hash: vaultHash });
+const vaultAddress = vaultReceipt.contractAddress!;
+console.log("Vault deployed at:", vaultAddress);
+
+// Deploy AaveV3Strategy first, since initialize needs its address
 console.log("Deploying AaveV3Strategy...");
-<<<<<<< HEAD
-const strategy = await viem.deployContract(
-  "AaveV3Strategy",
-  [params.asset, params.aToken, params.addressesProvider, "0x0000000000000000000000000000000000000000"],
-  { account: deployer.account }
-);
-console.log("Strategy deployed at:", strategy.address);
-
-console.log("\nDeploying AttestifyVault (non-upgradeable, immutable)...");
-const vault = await viem.deployContract(
-  "AttestifyVault",
-  [
-=======
 const strategyHash = await deployer.deployContract({
   abi: strategyArtifact.abi,
   bytecode: strategyArtifact.bytecode as `0x${string}`,
-  args: [params.asset, params.aToken, params.addressesProvider],
+  args: [params.asset, params.aToken, params.addressesProvider, vaultAddress],
+  gas: 8000000n,
 });
 const strategyReceipt = await publicClient.waitForTransactionReceipt({ hash: strategyHash });
 const strategyAddress = strategyReceipt.contractAddress!;
 console.log("Strategy deployed at:", strategyAddress);
 
-console.log("Deploying AttestifyVault implementation...");
-const vaultHash = await deployer.deployContract({
-  abi: vaultArtifact.abi,
-  bytecode: vaultArtifact.bytecode as `0x${string}`,
-});
-const vaultReceipt = await publicClient.waitForTransactionReceipt({ hash: vaultHash });
-const vaultImplementationAddress = vaultReceipt.contractAddress!;
-console.log("Vault implementation deployed at:", vaultImplementationAddress);
-
-// Encode init data using artifact ABI
-const initData = encodeFunctionData({
+// Call initialize on the vault
+console.log("Initializing AttestifyVault...");
+await deployer.writeContract({
+  address: vaultAddress,
   abi: vaultArtifact.abi,
   functionName: "initialize",
   args: [
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
     params.asset,
     strategyAddress,
     params.maxUserDeposit,
     params.maxTotalDeposit,
   ],
-<<<<<<< HEAD
-  { account: deployer.account }
-);
-console.log("Vault deployed at:", vault.address);
-
-console.log("\nLinking strategy to vault...");
-await strategy.write.setVault([vault.address], {
-  account: deployer.account,
-=======
+  gas: 2000000n,
 });
+console.log("Vault initialized.");
 
-console.log("Deploying ERC1967 proxy...");
-const proxyHash = await deployer.deployContract({
-  abi: proxyArtifact.abi,
-  bytecode: proxyArtifact.bytecode as `0x${string}`,
-  args: [vaultImplementationAddress, initData],
-});
-const proxyReceipt = await publicClient.waitForTransactionReceipt({ hash: proxyHash });
-const vaultAddress = proxyReceipt.contractAddress!;
-
-console.log("Vault proxy deployed at:", vaultAddress);
-
-// Wait for proxy deployment to be confirmed before next transaction
-await publicClient.waitForTransactionReceipt({ hash: proxyHash });
-
-console.log("Linking strategy to vault...");
-await deployer.writeContract({
-  address: strategyAddress,
-  abi: strategyArtifact.abi,
-  functionName: "setVault",
-  args: [vaultAddress],
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
-});
 
 if (params.rebalancer && params.rebalancer !== account.address) {
   console.log("Setting custom rebalancer:", params.rebalancer);
-<<<<<<< HEAD
-  await vault.write.setRebalancer([params.rebalancer], {
-    account: deployer.account,
-  });
-}
-
-if (params.authorizeVaultOnVerifier && params.verifier !== "0x0000000000000000000000000000000000000000") {
-  console.log("Authorizing vault on verifier...");
-  const verifier = await viem.getContractAt("SelfProtocolVerifier", params.verifier);
-  await verifier.write.authorizeCaller([vault.address], {
-    account: deployer.account,
-  });
-}
-
-console.log("\n✅ Deployment complete:");
-console.log("- Strategy: ", strategy.address);
-console.log("- Vault (MAIN): ", vault.address);
-console.log("\n🔒 Contract is IMMUTABLE (not upgradeable)");
-=======
   await deployer.writeContract({
     address: vaultAddress,
     abi: vaultArtifact.abi,
     functionName: "setRebalancer",
     args: [params.rebalancer],
+    gas: 500000n,
   });
 }
 
+// Save deployment addresses for verification
+const deploymentPath = join(process.cwd(), "deployment-addresses.json");
+const deployment = {
+  network: networkName,
+  chainId: chainId.toString(),
+  vault: vaultAddress,
+  strategy: strategyAddress,
+  strategyConstructorArgs: [
+    params.asset,
+    params.aToken,
+    params.addressesProvider,
+    vaultAddress,
+  ],
+};
+writeFileSync(deploymentPath, JSON.stringify(deployment, null, 2));
+console.log("\nDeployment saved to:", deploymentPath);
+
 console.log("\nDeployment complete:");
+console.log("- Vault:", vaultAddress);
 console.log("- Strategy:", strategyAddress);
-console.log("- Vault Implementation:", vaultImplementationAddress);
-console.log("- Vault Proxy:", vaultAddress);
->>>>>>> 84daae5f7f7783b2770ec42a45dca5bd6568daa7
 
 console.log("\n📝 Next steps:");
-console.log("1. Verify contracts: npx hardhat run scripts/verify-contracts.ts --network celoMainnet");
+console.log("1. Verify on Sourcify: npx hardhat run scripts/verify-contracts.ts --network celoMainnet");
 console.log("2. Fund the vault with reserves if needed.");
 console.log("3. Configure rebalancer/treasury roles and deposit limits as required.");
-

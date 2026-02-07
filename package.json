@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
-    "deploy": "hardhat run scripts/deploy-vault.ts --network celoMainnet",
+    "deploy": "hardhat compile --build-profile production && hardhat run scripts/deploy-vault.ts --network celoMainnet",
     "deploy:verifier": "hardhat run scripts/deploy-verifier.ts --network celoMainnet",
     "verify": "hardhat run scripts/verify-contracts.ts --network celoMainnet",
     "query-aave": "hardhat run scripts/query-aave-addresses.ts"
