@@ -8,6 +8,10 @@
     "deploy": "hardhat run scripts/deploy-vault.ts --network celoMainnet",
     "deploy:verifier": "hardhat run scripts/deploy-verifier.ts --network celoMainnet",
     "verify": "hardhat run scripts/verify-contracts.ts --network celoMainnet",
+    "test:deposit": "hardhat run scripts/test-deposit.ts --network celoMainnet",
+    "track:yield": "hardhat run scripts/track-yield.ts --network celoMainnet",
+    "check:yield": "hardhat run scripts/check-my-yield.ts --network celoMainnet",
+    "verify:aave": "hardhat run scripts/verify-aave-yield.ts --network celoMainnet",
     "query-aave": "hardhat run scripts/query-aave-addresses.ts"
   },
   "repository": {

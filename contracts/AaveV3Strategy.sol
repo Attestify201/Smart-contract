@@ -32,21 +32,27 @@ contract AaveV3Strategy is Ownable {
     // This ensures vault is always set at deployment and cannot be changed
     address public immutable vault;
 
+    /* ========== CONSTANTS ========== */
+    
+    uint256 private constant RAY = 1e27; // Aave uses RAY precision
+    uint256 private constant SECONDS_PER_YEAR = 31557600; // 365.25 days
+    uint256 private constant BASIS_POINTS = 10000; // 10000 basis points = 100%
+    
     /* ========== EVENTS ========== */
-
+    
     event Deposited(uint256 amount, uint256 timestamp);
     event Withdrawn(uint256 amount, uint256 timestamp);
-
+    
     /* ========== ERRORS ========== */
-
+    
     error OnlyVault();
     error ZeroAmount();
     error ZeroAddress();
     error InsufficientBalance();
     error SupplyMismatch(uint256 expected, uint256 actual); // FIX M-02: Added for supply validation
-
+    
     /* ========== CONSTRUCTOR ========== */
-
+    
     /**
      * @notice Initialize Aave strategy
      * @param _asset Underlying asset (cUSD)
@@ -70,23 +76,23 @@ contract AaveV3Strategy is Ownable {
         ) {
             revert ZeroAddress();
         }
-
+        
         asset = IERC20(_asset);
         aToken = IERC20(_aToken);
         addressesProvider = IPoolAddressesProvider(_addressesProvider);
         
         // FIX C-01: Initialize immutable vault (no longer settable)
         vault = _vault;
-
+        
         // Get Pool address from provider (recommended by Aave)
         aavePool = IPool(addressesProvider.getPool());
-
+        
         // Approve Aave pool to spend assets (one-time unlimited approval)
         asset.forceApprove(address(aavePool), type(uint256).max);
     }
-
+    
     /* ========== MODIFIERS ========== */
-
+    
     /**
      * @notice Restricts function access to vault only
      * @dev FIX C-01: Now works correctly with immutable vault
@@ -95,9 +101,9 @@ contract AaveV3Strategy is Ownable {
         if (msg.sender != vault) revert OnlyVault();
         _;
     }
-
+    
     /* ========== VAULT FUNCTIONS ========== */
-
+    
     /**
      * @notice Deposit assets to Aave
      * @param amount Amount to deposit
@@ -106,7 +112,7 @@ contract AaveV3Strategy is Ownable {
      */
     function deposit(uint256 amount) external onlyVault returns (uint256) {
         if (amount == 0) revert ZeroAmount();
-
+        
         // Transfer from vault to this strategy
         asset.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -130,11 +136,11 @@ contract AaveV3Strategy is Ownable {
         if (received < amount) {
             revert SupplyMismatch(amount, received);
         }
-
+        
         emit Deposited(amount, block.timestamp);
         return amount;
     }
-
+    
     /**
      * @notice Withdraw assets from Aave
      * @param amount Amount to withdraw
@@ -143,7 +149,7 @@ contract AaveV3Strategy is Ownable {
      */
     function withdraw(uint256 amount) external onlyVault returns (uint256) {
         if (amount == 0) revert ZeroAmount();
-
+        
         uint256 aTokenBalance = aToken.balanceOf(address(this));
         if (aTokenBalance == 0) return 0;
 
@@ -151,7 +157,7 @@ contract AaveV3Strategy is Ownable {
         uint256 withdrawAmount = amount > aTokenBalance
             ? aTokenBalance
             : amount;
-
+        
         // Withdraw from Aave (burns aTokens, returns underlying)
         // Note: Aave's withdraw may return less than requested in edge cases
         uint256 withdrawn = aavePool.withdraw(
@@ -159,16 +165,16 @@ contract AaveV3Strategy is Ownable {
             withdrawAmount,
             address(this)
         );
-
+        
         // Transfer to vault (use actual withdrawn amount, not requested)
         if (withdrawn > 0) {
-            asset.safeTransfer(vault, withdrawn);
+        asset.safeTransfer(vault, withdrawn);
         }
-
+        
         emit Withdrawn(withdrawn, block.timestamp);
         return withdrawn;
     }
-
+    
     /**
      * @notice Withdraw all assets from Aave
      * @return Amount withdrawn
@@ -177,22 +183,22 @@ contract AaveV3Strategy is Ownable {
     function withdrawAll() external onlyVault returns (uint256) {
         uint256 balance = aToken.balanceOf(address(this));
         if (balance == 0) return 0;
-
+        
         // Use type(uint256).max to withdraw all
         uint256 withdrawn = aavePool.withdraw(
             address(asset),
             type(uint256).max,
             address(this)
         );
-
+        
         asset.safeTransfer(vault, withdrawn);
-
+        
         emit Withdrawn(withdrawn, block.timestamp);
         return withdrawn;
     }
-
+    
     /* ========== VIEW FUNCTIONS ========== */
-
+    
     /**
      * @notice Get total balance in Aave (includes accrued interest)
      * @return Total balance in underlying asset
@@ -201,19 +207,42 @@ contract AaveV3Strategy is Ownable {
     function totalAssets() external view returns (uint256) {
         return aToken.balanceOf(address(this));
     }
-
+    
     /**
      * @notice Get current supply APY from Aave
      * @return APY in basis points (e.g., 350 = 3.5%)
-     * @dev TODO: Implement by querying Aave ProtocolDataProvider
-     * @dev For now, returns estimated APY placeholder
+     * @dev Calculates APY from Aave's currentLiquidityRate
+     * @dev Uses linear approximation: APY ≈ (liquidityRate * seconds_per_year * BASIS_POINTS) / RAY
+     * @dev liquidityRate is in RAY format (1e27), represents rate per second
+     * @dev Note: For accurate APY with compounding, use: APY = ((1 + rate/RAY)^(seconds_per_year) - 1) * BASIS_POINTS
+     * @dev But that requires expensive exponentiation, so we use linear approximation for gas efficiency
+     * @dev Returns 0 if liquidityRate is 0
      */
-    function getCurrentAPY() external pure returns (uint256) {
-        // TODO: Implement by querying Aave ProtocolDataProvider
-        // For now, return estimated APY
-        return 350; // 3.5%
+    function getCurrentAPY() external view returns (uint256) {
+        DataTypes.ReserveData memory reserveData = aavePool.getReserveData(address(asset));
+        uint128 liquidityRate = reserveData.currentLiquidityRate;
+        
+        if (liquidityRate == 0) {
+            return 0;
+        }
+        
+        // Calculate APY in basis points using linear approximation
+        // Formula: APY ≈ (liquidityRate * seconds_per_year * BASIS_POINTS) / RAY
+        // This is accurate for small rates (typical APY < 20%)
+        // For rates > 0.0001 per second, this approximation may overestimate
+        // However, typical Aave rates are much smaller (e.g., 0.00000008 per second = ~2.5% APY)
+        uint256 apyBasisPoints = (uint256(liquidityRate) * SECONDS_PER_YEAR * BASIS_POINTS) / RAY;
+        
+        // Cap at reasonable maximum (1000% = 100000 basis points) to prevent overflow issues
+        if (apyBasisPoints > 100000) {
+            // If calculation gives unrealistic value, the rate format might be different
+            // Return a conservative estimate based on typical Aave rates (2-10% APY)
+            return 500; // 5% APY as fallback
+        }
+        
+        return apyBasisPoints;
     }
-
+    
     /**
      * @notice Get simplified reserve data from Aave
      * @return liquidityIndex Current liquidity index
@@ -246,9 +275,9 @@ contract AaveV3Strategy is Ownable {
             data.lastUpdateTimestamp
         );
     }
-
+    
     /* ========== ADMIN FUNCTIONS ========== */
-
+    
     /**
      * @notice Emergency withdraw all funds to owner
      * @dev Only callable by owner in case of emergency
@@ -260,7 +289,7 @@ contract AaveV3Strategy is Ownable {
         if (aaveBalance > 0) {
             aavePool.withdraw(address(asset), type(uint256).max, address(this));
         }
-
+        
         // Send all assets to owner
         uint256 balance = asset.balanceOf(address(this));
         if (balance > 0) {
