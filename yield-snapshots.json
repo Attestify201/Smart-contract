@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": 1771336299,
+    "date": "2026-02-17T13:51:39.033Z",
+    "strategyBalance": "900004440977965185",
+    "vaultTotalAssets": "1000004442466228579",
+    "vaultReserve": "100000000000000000",
+    "totalDeposited": "1000000000000000000",
+    "totalYield": "4442466228579",
+    "yieldPercentage": "0.0444",
+    "apy": "82284468.53"
+  },
+  {
+    "timestamp": 1771434026,
+    "date": "2026-02-18T17:00:26.756Z",
+    "strategyBalance": "900077152940763476",
+    "vaultTotalAssets": "1000077153684450418",
+    "vaultReserve": "100000000000000000",
+    "totalDeposited": "1000000000000000000",
+    "totalYield": "77153684450418",
+    "yieldPercentage": "0.7715",
+    "apy": "82228643.90"
+  }
+]
